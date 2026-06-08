@@ -1,0 +1,179 @@
+import json
+from storage import load_data, save_data, DATA_FILE
+from seedlink_app import SeedLinkApp
+from validation import is_seed
+from unittest.mock import patch
+from exceptions import InvalidSeedError, DataFileCorruptedError
+import pytest
+from sdg import SDG
+from crop import Crop
+from exchange import Exchange 
+from datetime import date
+
+# CROP TESTS
+def test_crop_properties():
+    crop = Crop("mango", "PH-001", "high", "food")
+
+    assert crop.name == "mango"
+    assert crop.seed_id == "PH-001"
+    assert crop.resilience == "high"
+    assert crop.use == "food"
+
+
+def test_crop_str():
+    crop = Crop("mango", "PH-001", "high", "food")
+
+    assert str(crop) == "Crop(mango, ID=PH-001)"
+
+
+# EXCHANGE TESTS
+def test_exchange_properties():
+    ex = Exchange(
+        crop_name="mango",
+        source="farm",
+        destination="PH",
+        date=date(2024, 1, 1)
+    )
+
+    assert ex.crop_name == "mango"
+    assert ex.source == "farm"
+    assert ex.destination == "PH"
+    assert ex.date.year == 2024
+
+
+def test_exchange_str():
+    ex = Exchange(
+        crop_name="mango",
+        source="farm",
+        destination="PH",
+        date=date(2024, 1, 1)
+    )
+
+    assert "mango" in str(ex)
+    assert "farm" in str(ex)
+    assert "PH" in str(ex)
+
+
+
+# EXCEPTIONS TESTS
+def test_invalid_seed_error():
+    try:
+        raise InvalidSeedError("invalid seed")
+    except InvalidSeedError:
+        assert True
+
+
+def test_data_file_corrupted_error():
+    try:
+        raise DataFileCorruptedError("corrupted file")
+    except DataFileCorruptedError:
+        assert True
+
+
+# SEEDLINK app
+# 1
+def test_scan_valid():
+    app = SeedLinkApp()
+
+    assert app.scan("mango") is True
+
+# 2
+def test_scan_unknown_yes():
+    app = SeedLinkApp()
+
+    with patch("builtins.input", return_value="y"):
+        assert app.scan("dragonfruit") is True
+
+# SDG test
+# 1. known crop
+def test_mango():
+    sdg = SDG("mango")
+    result = sdg.get_details()
+    assert "Climate Action" in result["goal"]
+
+
+# 2. unknown crop (default case)
+def test_unknown():
+    sdg = SDG("dragonfruit")
+    result = sdg.get_details()
+    assert result["goal"] == "SDG 2 - Zero Hunger"
+
+
+# 3. normalization check
+def test_clean_input():
+    sdg = SDG("   MaNgO   ")
+    assert sdg.crop_name == "mango"
+
+# validation test
+# 1
+def test_known_seed():
+    seed = is_seed("mango")
+    assert seed is True
+# 2
+def test_unknown_seed_yes():
+    with patch("builtins.input", return_value="y"):
+        assert is_seed("dragonfruit") is True
+# 3
+def test_unknown_seed_no():
+    with patch("builtins.input", return_value="n"):
+        with pytest.raises(InvalidSeedError):
+            is_seed("11  1  ")
+
+
+# FAKE RECORD FOR TESTING
+class FakeRecord:
+    def to_dict(self):
+        return {
+            "crop": {"name": "mango"},
+            "exchange": {"source": "test"},
+        }
+# 1. TEST: no file exist
+def test_load_no_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    result = load_data()
+    assert result == {}
+
+# 2. TEST: valid file load
+def test_load_valid_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    sample = {
+        "crop": {"name": "mango"},
+        "exchange": {"source": "test"}
+    }
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(sample, f)
+
+    result = load_data()
+    assert result["crop"]["name"] == "mango"
+
+# 3. TEST: CORRUPTED JSON
+def test_load_corrupted_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with open(DATA_FILE, "w") as f:
+        f.write("{invalid json")
+
+    result = load_data()
+
+    assert result is not None
+
+# 4. TEST: save data
+def test_save_data(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    record = FakeRecord()
+
+    save_data(record)
+
+    # check file created
+    with open(DATA_FILE, "r") as f:
+        data = json.load(f)
+
+    assert data["crop"]["name"] == "mango"
+
+    # check print output
+    captured = capsys.readouterr()
+    assert "Data saved locally" in captured.out
